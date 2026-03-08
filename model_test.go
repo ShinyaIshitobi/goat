@@ -329,10 +329,8 @@ func TestInitialWorld(t *testing.T) {
 			}
 		})
 	}
-}
 
-func TestInitialWorld_DefaultHandlerOverride(t *testing.T) {
-	tests := []struct {
+	overrideTests := []struct {
 		name                  string
 		setup                 func() AbstractStateMachine
 		targetState           AbstractState
@@ -398,7 +396,7 @@ func TestInitialWorld_DefaultHandlerOverride(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
+	for _, tt := range overrideTests {
 		t.Run(tt.name, func(t *testing.T) {
 			sm := tt.setup()
 			w := initialWorld(sm)
