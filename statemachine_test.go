@@ -23,7 +23,7 @@ func TestNewStateMachineSpec(t *testing.T) {
 }
 
 func TestStateMachineSpec_DefineStates(t *testing.T) {
-	t.Run("defines states and sets up default handlers", func(t *testing.T) {
+	t.Run("defines states and initializes handler builder entries", func(t *testing.T) {
 		spec := NewStateMachineSpec(&testStateMachine{})
 
 		state1 := newTestState("state1")
@@ -39,9 +39,8 @@ func TestStateMachineSpec_DefineStates(t *testing.T) {
 			t.Errorf("States mismatch:\n%s", cmp.Diff([]AbstractState{state1, state2}, spec.states))
 		}
 		for _, state := range []AbstractState{state1, state2} {
-			builders := spec.handlerBuilders[state]
-			if len(builders) != 2 {
-				t.Errorf("Expected exactly 2 default handlers for state, got %d", len(builders))
+			if _, exists := spec.handlerBuilders[state]; !exists {
+				t.Error("handlerBuilders entry should be initialized for state")
 			}
 		}
 	})

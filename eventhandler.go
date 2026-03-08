@@ -360,6 +360,14 @@ func (h *haltHandlers) handle(env environment, smID string, event AbstractEvent)
 	return lss, nil
 }
 
+// defaultHandlers defines the fallback handlers added to each state
+// when no user-defined handler exists for the corresponding event type.
+// To add a new default handler, append an entry here.
+var defaultHandlers = []handlerInfo{
+	{event: &transitionEvent{}, handler: &defaultOnTransitionHandler{}},
+	{event: &haltEvent{}, handler: &defaultOnHaltHandler{}},
+}
+
 type defaultOnTransitionHandler struct{}
 
 //nolint:unparam // error return required by interface

@@ -1,6 +1,7 @@
 package goat
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -325,6 +326,104 @@ func TestInitialWorld(t *testing.T) {
 				if innerSM.EventHandlers == nil {
 					t.Errorf("StateMachine %q: EventHandlers should be initialized, got nil", smID)
 				}
+			}
+		})
+	}
+}
+
+func TestInitialWorld_DefaultHandlerOverride(t *testing.T) {
+	tests := []struct {
+		name                  string
+		setup                 func() AbstractStateMachine
+		targetState           AbstractState
+		wantDefaultTransition bool
+		wantDefaultHalt       bool
+	}{
+		{
+			name: "default handlers present when no user handlers registered",
+			setup: func() AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				spec.DefineStates(stateA).SetInitialState(stateA)
+				sm, _ := spec.NewInstance()
+				return sm
+			},
+			targetState:           newTestState("A"),
+			wantDefaultTransition: true,
+			wantDefaultHalt:       true,
+		},
+		{
+			name: "user OnTransition replaces default transition handler",
+			setup: func() AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				spec.DefineStates(stateA).SetInitialState(stateA)
+				OnTransition(spec, stateA, func(ctx context.Context, toState AbstractState, sm *testStateMachine) {})
+				sm, _ := spec.NewInstance()
+				return sm
+			},
+			targetState:           newTestState("A"),
+			wantDefaultTransition: false,
+			wantDefaultHalt:       true,
+		},
+		{
+			name: "user OnHalt replaces default halt handler",
+			setup: func() AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				spec.DefineStates(stateA).SetInitialState(stateA)
+				OnHalt(spec, stateA, func(ctx context.Context, sm *testStateMachine) {})
+				sm, _ := spec.NewInstance()
+				return sm
+			},
+			targetState:           newTestState("A"),
+			wantDefaultTransition: true,
+			wantDefaultHalt:       false,
+		},
+		{
+			name: "user handlers on stateA do not affect stateB defaults",
+			setup: func() AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				stateB := newTestState("B")
+				spec.DefineStates(stateA, stateB).SetInitialState(stateA)
+				OnTransition(spec, stateA, func(ctx context.Context, toState AbstractState, sm *testStateMachine) {})
+				OnHalt(spec, stateA, func(ctx context.Context, sm *testStateMachine) {})
+				sm, _ := spec.NewInstance()
+				return sm
+			},
+			targetState:           newTestState("B"),
+			wantDefaultTransition: true,
+			wantDefaultHalt:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sm := tt.setup()
+			w := initialWorld(sm)
+			innerSM := getInnerStateMachine(w.env.machines[sm.id()])
+
+			hasDefaultTransition := false
+			hasDefaultHalt := false
+			for state, his := range innerSM.EventHandlers {
+				if sameState(state, tt.targetState) {
+					for _, hi := range his {
+						if _, ok := hi.handler.(*defaultOnTransitionHandler); ok {
+							hasDefaultTransition = true
+						}
+						if _, ok := hi.handler.(*defaultOnHaltHandler); ok {
+							hasDefaultHalt = true
+						}
+					}
+				}
+			}
+
+			if hasDefaultTransition != tt.wantDefaultTransition {
+				t.Errorf("defaultOnTransitionHandler: got present=%v, want present=%v", hasDefaultTransition, tt.wantDefaultTransition)
+			}
+			if hasDefaultHalt != tt.wantDefaultHalt {
+				t.Errorf("defaultOnHaltHandler: got present=%v, want present=%v", hasDefaultHalt, tt.wantDefaultHalt)
 			}
 		})
 	}

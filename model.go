@@ -93,12 +93,19 @@ func initialWorld(sms ...AbstractStateMachine) world {
 
 		innerSM.EventHandlers = make(map[AbstractState][]handlerInfo)
 		for state, builders := range innerSM.HandlerBuilders {
+			registeredEvents := make(map[string]struct{})
 			for _, builderInfo := range builders {
 				handler := builderInfo.builder(finalID)
 				innerSM.EventHandlers[state] = append(innerSM.EventHandlers[state], handlerInfo{
 					event:   builderInfo.event,
 					handler: handler,
 				})
+				registeredEvents[getEventName(builderInfo.event)] = struct{}{}
+			}
+			for _, dh := range defaultHandlers {
+				if _, ok := registeredEvents[getEventName(dh.event)]; !ok {
+					innerSM.EventHandlers[state] = append(innerSM.EventHandlers[state], dh)
+				}
 			}
 		}
 
