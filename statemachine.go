@@ -63,7 +63,7 @@ func NewStateMachineSpec[T AbstractStateMachine](prototype T) *StateMachineSpec[
 func (spec *StateMachineSpec[T]) DefineStates(states ...AbstractState) *StateMachineSpec[T] {
 	spec.states = states
 	for _, state := range states {
-		spec.setDefaultHandlerBuilders(state)
+		spec.initHandlerBuilders(state)
 	}
 	return spec
 }
@@ -84,22 +84,10 @@ func (spec *StateMachineSpec[T]) SetInitialState(state AbstractState) *StateMach
 	return spec
 }
 
-func (spec *StateMachineSpec[T]) setDefaultHandlerBuilders(state AbstractState) {
-	transitionBuilder := func(smID string) handler {
-		return &defaultOnTransitionHandler{}
+func (spec *StateMachineSpec[T]) initHandlerBuilders(state AbstractState) {
+	if _, exists := spec.handlerBuilders[state]; !exists {
+		spec.handlerBuilders[state] = []handlerBuilderInfo{}
 	}
-	spec.handlerBuilders[state] = append(spec.handlerBuilders[state], handlerBuilderInfo{
-		event:   &transitionEvent{},
-		builder: transitionBuilder,
-	})
-
-	haltBuilder := func(smID string) handler {
-		return &defaultOnHaltHandler{}
-	}
-	spec.handlerBuilders[state] = append(spec.handlerBuilders[state], handlerBuilderInfo{
-		event:   &haltEvent{},
-		builder: haltBuilder,
-	})
 }
 
 func (spec *StateMachineSpec[T]) validate() error {

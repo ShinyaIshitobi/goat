@@ -1,6 +1,7 @@
 package goat
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -229,15 +230,71 @@ func TestModel_evaluateInvariants(t *testing.T) {
 }
 
 func TestInitialWorld(t *testing.T) {
+	cmpOpts := cmp.Options{
+		cmpopts.IgnoreFields(world{}, "id"),
+		cmpopts.IgnoreFields(StateMachine{}, "EventHandlers", "HandlerBuilders"),
+		cmp.AllowUnexported(
+			world{},
+			environment{},
+			StateMachine{},
+			Event[AbstractStateMachine, AbstractStateMachine]{},
+			Event[*testStateMachine, *testStateMachine]{},
+			entryEvent{},
+			exitEvent{},
+			transitionEvent{},
+			haltEvent{},
+		),
+	}
+
+	verifyWorld := func(want world) func(t *testing.T, got world) {
+		return func(t *testing.T, got world) {
+			t.Helper()
+			if diff := cmp.Diff(want, got, cmpOpts); diff != "" {
+				t.Errorf("initialWorld() mismatch (-want +got):\n%s", diff)
+			}
+		}
+	}
+
+	verifyDefaultHandlers := func(targetState AbstractState, wantTransition, wantHalt bool) func(t *testing.T, got world) {
+		return func(t *testing.T, got world) {
+			t.Helper()
+			hasDefaultTransition := false
+			hasDefaultHalt := false
+			for _, sm := range got.env.machines {
+				innerSM := getInnerStateMachine(sm)
+				for state, his := range innerSM.EventHandlers {
+					if sameState(state, targetState) {
+						for _, hi := range his {
+							if _, ok := hi.handler.(*defaultOnTransitionHandler); ok {
+								hasDefaultTransition = true
+							}
+							if _, ok := hi.handler.(*defaultOnHaltHandler); ok {
+								hasDefaultHalt = true
+							}
+						}
+					}
+				}
+			}
+			if hasDefaultTransition != wantTransition {
+				t.Errorf("defaultOnTransitionHandler: got present=%v, want present=%v", hasDefaultTransition, wantTransition)
+			}
+			if hasDefaultHalt != wantHalt {
+				t.Errorf("defaultOnHaltHandler: got present=%v, want present=%v", hasDefaultHalt, wantHalt)
+			}
+		}
+	}
+
 	tests := []struct {
-		name string
-		sms  []AbstractStateMachine
-		want world
+		name   string
+		setup  func() []AbstractStateMachine
+		verify func(t *testing.T, got world)
 	}{
 		{
 			name: "single state machine",
-			sms:  []AbstractStateMachine{newTestStateMachine(newTestState("initial"))},
-			want: world{
+			setup: func() []AbstractStateMachine {
+				return []AbstractStateMachine{newTestStateMachine(newTestState("initial"))}
+			},
+			verify: verifyWorld(world{
 				env: environment{
 					machines: map[string]AbstractStateMachine{
 						"testStateMachine": func() AbstractStateMachine {
@@ -250,15 +307,17 @@ func TestInitialWorld(t *testing.T) {
 						testStateMachineID: {&entryEvent{}},
 					},
 				},
-			},
+			}),
 		},
 		{
 			name: "multiple state machines",
-			sms: []AbstractStateMachine{
-				newTestStateMachine(newTestState("state1")),
-				newTestStateMachine(newTestState("state2")),
+			setup: func() []AbstractStateMachine {
+				return []AbstractStateMachine{
+					newTestStateMachine(newTestState("state1")),
+					newTestStateMachine(newTestState("state2")),
+				}
 			},
-			want: world{
+			verify: verifyWorld(world{
 				env: environment{
 					machines: map[string]AbstractStateMachine{
 						"testStateMachine": func() AbstractStateMachine {
@@ -277,55 +336,86 @@ func TestInitialWorld(t *testing.T) {
 						"testStateMachine_1": {&entryEvent{}},
 					},
 				},
-			},
+			}),
 		},
 		{
 			name: "no state machines",
-			sms:  []AbstractStateMachine{},
-			want: world{
+			setup: func() []AbstractStateMachine {
+				return []AbstractStateMachine{}
+			},
+			verify: verifyWorld(world{
 				env: environment{
 					machines: map[string]AbstractStateMachine{},
 					queue:    map[string][]AbstractEvent{},
 				},
+			}),
+		},
+		{
+			name: "default handlers present when no user handlers registered",
+			setup: func() []AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				spec.DefineStates(stateA).SetInitialState(stateA)
+				sm, _ := spec.NewInstance()
+				return []AbstractStateMachine{sm}
 			},
+			verify: verifyDefaultHandlers(newTestState("A"), true, true),
+		},
+		{
+			name: "user OnTransition replaces default transition handler",
+			setup: func() []AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				spec.DefineStates(stateA).SetInitialState(stateA)
+				OnTransition(spec, stateA, func(ctx context.Context, toState AbstractState, sm *testStateMachine) {})
+				sm, _ := spec.NewInstance()
+				return []AbstractStateMachine{sm}
+			},
+			verify: verifyDefaultHandlers(newTestState("A"), false, true),
+		},
+		{
+			name: "user OnHalt replaces default halt handler",
+			setup: func() []AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				spec.DefineStates(stateA).SetInitialState(stateA)
+				OnHalt(spec, stateA, func(ctx context.Context, sm *testStateMachine) {})
+				sm, _ := spec.NewInstance()
+				return []AbstractStateMachine{sm}
+			},
+			verify: verifyDefaultHandlers(newTestState("A"), true, false),
+		},
+		{
+			name: "user handlers on stateA do not affect stateB defaults",
+			setup: func() []AbstractStateMachine {
+				spec := NewStateMachineSpec(&testStateMachine{})
+				stateA := newTestState("A")
+				stateB := newTestState("B")
+				spec.DefineStates(stateA, stateB).SetInitialState(stateA)
+				OnTransition(spec, stateA, func(ctx context.Context, toState AbstractState, sm *testStateMachine) {})
+				OnHalt(spec, stateA, func(ctx context.Context, sm *testStateMachine) {})
+				sm, _ := spec.NewInstance()
+				return []AbstractStateMachine{sm}
+			},
+			verify: verifyDefaultHandlers(newTestState("B"), true, true),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := initialWorld(tt.sms...)
-
-			opts := cmp.Options{
-				cmpopts.IgnoreFields(world{}, "id"),
-				cmpopts.IgnoreFields(StateMachine{}, "EventHandlers", "HandlerBuilders"),
-				cmp.AllowUnexported(
-					world{},
-					environment{},
-					StateMachine{},
-					Event[AbstractStateMachine, AbstractStateMachine]{},
-					Event[*testStateMachine, *testStateMachine]{},
-					entryEvent{},
-					exitEvent{},
-					transitionEvent{},
-					haltEvent{},
-				),
-			}
-
-			if diff := cmp.Diff(tt.want, got, opts); diff != "" {
-				t.Errorf("initialWorld() mismatch (-want +got):\n%s", diff)
-			}
+			got := initialWorld(tt.setup()...)
 
 			for smID, sm := range got.env.machines {
 				innerSM := getInnerStateMachine(sm)
-
 				if len(innerSM.HandlerBuilders) == 0 {
 					t.Errorf("StateMachine %q: HandlerBuilders should remain initialized", smID)
 				}
-
 				if innerSM.EventHandlers == nil {
 					t.Errorf("StateMachine %q: EventHandlers should be initialized, got nil", smID)
 				}
 			}
+
+			tt.verify(t, got)
 		})
 	}
 }
